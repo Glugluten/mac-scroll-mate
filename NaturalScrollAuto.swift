@@ -11,6 +11,8 @@ final class NaturalScrollAuto {
     private var lastDesiredValue: Bool?
     private var pendingFastSync: DispatchWorkItem?
     private var pendingSettledSync: DispatchWorkItem?
+    private var cachedRules: [MouseRule] = []
+    private var cachedRulesModifiedAt: Date?
     private let mouseNamesPath: String
 
     init() {
@@ -110,45 +112,47 @@ final class NaturalScrollAuto {
     }
 
     private func externalMouseConnected() -> Bool {
-        let output = run("/usr/bin/hidutil", ["list"])
-        let allowedNames = configuredMouseNames()
+        let output = run("/usr/bin/hidutil", ["list", "--ndjson", "--matching", "{\"PrimaryUsagePage\":1,\"PrimaryUsage\":2}"])
+        let rules = configuredMouseRules()
 
-        if allowedNames.isEmpty {
+        if rules.isEmpty {
             return false
         }
 
         for line in output.split(separator: "\n") {
-            let fields = line.split(separator: " ")
-
-            guard fields.count >= 6 else {
+            guard let device = HIDDevice(jsonLine: String(line)),
+                  device.isExternalMouse,
+                  rules.contains(where: { $0.matches(device) }) else {
                 continue
             }
 
-            let usagePage = fields[3]
-            let usage = fields[4]
-            let builtIn = fields.last ?? ""
-
-            if usagePage == "1" && usage == "2" && builtIn == "0" && matchesConfiguredMouse(String(line), allowedNames) {
-                return true
-            }
+            return true
         }
 
         return false
     }
 
-    private func configuredMouseNames() -> [String] {
+    private func configuredMouseRules() -> [MouseRule] {
+        let modifiedAt = (try? FileManager.default.attributesOfItem(atPath: mouseNamesPath)[.modificationDate]) as? Date
+
+        if modifiedAt == cachedRulesModifiedAt {
+            return cachedRules
+        }
+
         guard let contents = try? String(contentsOfFile: mouseNamesPath, encoding: .utf8) else {
+            cachedRules = []
+            cachedRulesModifiedAt = modifiedAt
             return []
         }
 
-        return contents
+        cachedRules = contents
             .split(separator: "\n")
             .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty && !$0.hasPrefix("#") }
-    }
+            .compactMap(MouseRule.init)
+        cachedRulesModifiedAt = modifiedAt
 
-    private func matchesConfiguredMouse(_ line: String, _ mouseNames: [String]) -> Bool {
-        mouseNames.contains { line.contains($0) }
+        return cachedRules
     }
 
     private func run(_ executable: String, _ arguments: [String]) -> String {
@@ -169,6 +173,80 @@ final class NaturalScrollAuto {
 
         let data = output.fileHandleForReading.readDataToEndOfFile()
         return String(data: data, encoding: .utf8) ?? ""
+    }
+}
+
+private struct HIDDevice {
+    let vendorID: Int?
+    let productID: Int?
+    let product: String?
+    let primaryUsagePage: Int
+    let primaryUsage: Int
+    let builtIn: Bool
+
+    var isExternalMouse: Bool {
+        primaryUsagePage == 1 && primaryUsage == 2 && !builtIn
+    }
+
+    init?(jsonLine: String) {
+        guard let data = jsonLine.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let dict = object as? [String: Any] else {
+            return nil
+        }
+
+        vendorID = dict["VendorID"] as? Int
+        productID = dict["ProductID"] as? Int
+        product = dict["Product"] as? String
+        primaryUsagePage = dict["PrimaryUsagePage"] as? Int ?? 0
+        primaryUsage = dict["PrimaryUsage"] as? Int ?? 0
+        builtIn = dict["Built-In"] as? Bool ?? false
+    }
+}
+
+private enum MouseRule {
+    case productName(String)
+    case vendorProduct(vendorID: Int, productID: Int)
+
+    init?(_ rawValue: String) {
+        if let ids = MouseRule.parseVendorProduct(rawValue) {
+            self = .vendorProduct(vendorID: ids.vendorID, productID: ids.productID)
+            return
+        }
+
+        self = .productName(rawValue)
+    }
+
+    func matches(_ device: HIDDevice) -> Bool {
+        switch self {
+        case .productName(let name):
+            return device.product == name
+        case .vendorProduct(let vendorID, let productID):
+            return device.vendorID == vendorID && device.productID == productID
+        }
+    }
+
+    private static func parseVendorProduct(_ value: String) -> (vendorID: Int, productID: Int)? {
+        let parts = value.split(separator: ":", omittingEmptySubsequences: false)
+
+        guard parts.count == 2,
+              let vendorID = parseHexID(String(parts[0])),
+              let productID = parseHexID(String(parts[1])) else {
+            return nil
+        }
+
+        return (vendorID, productID)
+    }
+
+    private static func parseHexID(_ value: String) -> Int? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let hex = trimmed.hasPrefix("0x") ? String(trimmed.dropFirst(2)) : trimmed
+
+        guard hex.count == 4 else {
+            return nil
+        }
+
+        return Int(hex, radix: 16)
     }
 }
 

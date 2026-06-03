@@ -11,13 +11,13 @@ Mac Scroll Mate 是一个轻量级 macOS LaunchAgent，可以根据你配置的�
 ## 功能
 
 - 外接鼠标连接时：关闭自然滚动，适合传统鼠标滚轮；外接鼠标断开时：开启自然滚动，适合 Mac 触控板。
-- 支持多个鼠标设备名。
+- 支持多个鼠标设备名，或 VendorID 和 ProductID 精确匹配设备。
 - 基于 HID 设备事件触发，基本不占用系统资源。
 
 ## Features
 
 - External mouse connected: turns Natural Scrolling off for a traditional mouse wheel; external mouse disconnected: turns Natural Scrolling on for the Mac trackpad.
-- Supports multiple configured mouse device names.
+- Supports multiple configured mouse device names, or exact `0xVID:0xPID` device matching.
 - Triggered by HID device events, with minimal system resource usage.
 
 ## Requirements / 系统要求
@@ -78,18 +78,40 @@ In this example, the mouse name is:
 Xiaoxin M2Pro 2.4G
 ```
 
-4. Add the mouse name to `mouse-names.txt`, one name per line:
+4. Add the mouse name to `mouse-names.txt`, one rule per line:
 
-   将鼠标名称加入 `mouse-names.txt`，每行一个名称：
+   将鼠标名称加入 `mouse-names.txt`，每行一条规则：
 
 ```txt
 Xiaoxin M2Pro 2.4G
 Logitech MX Master 3
 ```
 
+Product names are matched exactly. For example, `MX Master` will not match `MX Master 3`.
+
+产品名称使用精确匹配。例如，`MX Master` 不会匹配 `MX Master 3`。
+
+You can also use an exact VendorID and ProductID pair:
+
+也可以使用精确的 VendorID 和 ProductID 组合：
+
+```txt
+0x17ef:0x623a
+```
+
+Both formats can be mixed:
+
+两种格式可以混用：
+
+```txt
+Xiaoxin M2Pro 2.4G
+0x17ef:0x623a
+Logitech MX Master 3
+```
+
 Only configured names count as external mice. This avoids confusing wireless receivers, keyboards, or composite USB devices with the actual mouse.
 
-只有配置文件里的设备名会被当作外接鼠标，这可以避免无线接收器、键盘或复合 USB 外设被误判。
+只有配置文件里的设备名或硬件 ID 会被当作外接鼠标，这可以避免无线接收器、键盘或复合 USB 外设被误判。
 
 Before installation, edit the repository file:
 
@@ -172,9 +194,9 @@ defaults read -g com.apple.swipescrolldirection
 
 ## How It Works / 工作原理
 
-The app registers an `IOHIDManager` listener for mouse connect and disconnect events. When a relevant HID event arrives, it debounces the event burst, checks `hidutil list` against your configured mouse names, and applies the desired Natural Scrolling state.
+The app registers an `IOHIDManager` listener for mouse connect and disconnect events. When a relevant HID event arrives, it debounces the event burst, checks structured `hidutil list --ndjson` output against your configured product names or VendorID/ProductID pairs, and applies the desired Natural Scrolling state.
 
-程序通过 `IOHIDManager` 监听鼠标接入和拔出事件。收到相关 HID 事件后，它会合并短时间内的一组事件，再用 `hidutil list` 和你的鼠标名称配置进行匹配，最后应用对应的自然滚动状态。
+程序通过 `IOHIDManager` 监听鼠标接入和拔出事件。收到相关 HID 事件后，它会合并短时间内的一组事件，再用结构化的 `hidutil list --ndjson` 输出和你的产品名称或 VendorID/ProductID 配置进行匹配，最后应用对应的自然滚动状态。
 
 To make the change actually affect active scrolling behavior, the app writes the user preference and calls macOS's private `setSwipeScrollDirection` function from `PreferencePanesSupport.framework`.
 

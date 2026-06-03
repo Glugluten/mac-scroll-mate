@@ -1,3 +1,4 @@
-# One mouse device name per line.
+# One mouse device name or VendorID:ProductID pair per line.
 # Lines starting with # are ignored.
 Xiaoxin M2Pro 2.4G
+# 0x17ef:0x623a
